@@ -58,11 +58,7 @@ def hash_passphrase(passphrase: str, *, salt: bytes | None = None) -> str:
     digest = hashlib.pbkdf2_hmac(
         "sha256", passphrase.encode("utf-8"), salt, PBKDF2_ROUNDS
     )
-    return "pbkdf2${}${}${}".format(
-        PBKDF2_ROUNDS,
-        base64.b64encode(salt).decode(),
-        base64.b64encode(digest).decode(),
-    )
+    return f"pbkdf2${PBKDF2_ROUNDS}${base64.b64encode(salt).decode()}${base64.b64encode(digest).decode()}"
 
 
 def verify_passphrase(passphrase: str, stored: str) -> bool:
