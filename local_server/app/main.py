@@ -30,6 +30,7 @@ from fastapi.templating import Jinja2Templates
 from .config import Settings, get_settings
 from .db import JobStore
 from .discovery import find_cryozeta_repo, query_nvidia_cached, select_pixi_env
+from .identity import describe_source, resolve_submitter
 from .mapfile import MapError
 from .msa import PROTEIN_NON_PAIRING, PROTEIN_PAIRING, RNA_NON_PAIRING
 from .paths import job_paths
@@ -156,6 +157,15 @@ def create_app(
             "repo": repo,
             "pixi_env": pixi_env,
             "nvidia": query_nvidia_cached(),
+            "viewer": resolve_submitter(
+                client_host=request.client.host if request.client else None,
+                headers=request.headers,
+                trust_proxy_headers=settings.trust_tailscale_headers,
+            ),
+            "identity_source": describe_source(
+                request.client.host if request.client else None,
+                settings.trust_tailscale_headers,
+            ),
             "counts": store.counts_by_status(),
         }
         base.update(extra)
@@ -289,6 +299,11 @@ def create_app(
                 run_mode=RunMode(run_mode),
                 inference_mode=InferenceMode(inference_mode),
                 overwrite=bool(overwrite),
+                submitted_by=resolve_submitter(
+                    client_host=request.client.host if request.client else None,
+                    headers=request.headers,
+                    trust_proxy_headers=settings.trust_tailscale_headers,
+                ),
             )
             prepared = prepare_job(req, settings, store)
         except (ValidationError, MapError, ValueError) as exc:
@@ -363,6 +378,7 @@ def create_app(
             map_filename=job.map_filename,
             overwrite=True,
             sequences=job.sequences,
+            submitted_by=job.submitted_by,
             job_id=new_id,
         )
         return RedirectResponse(url=f"/jobs/{new_id}", status_code=303)

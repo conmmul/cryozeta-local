@@ -18,7 +18,7 @@ from collections.abc import Iterable
 
 from .states import InferenceMode, JobStatus, RunMode, assert_transition
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     overwrite           INTEGER NOT NULL DEFAULT 0,
     pid                 INTEGER,
     sequences_json      TEXT NOT NULL DEFAULT '[]',
-    command_json        TEXT NOT NULL DEFAULT '[]'
+    command_json        TEXT NOT NULL DEFAULT '[]',
+    submitted_by        TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status  ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at DESC);
@@ -72,6 +73,7 @@ class Job:
     map_filename: str
     overwrite: bool
     pid: int | None
+    submitted_by: str = ""
     sequences: list[dict[str, Any]] = field(default_factory=list)
     command: list[str] = field(default_factory=list)
 
@@ -109,6 +111,7 @@ def _row_to_job(row: sqlite3.Row) -> Job:
         map_filename=row["map_filename"],
         overwrite=bool(row["overwrite"]),
         pid=row["pid"],
+        submitted_by=row["submitted_by"] if "submitted_by" in row.keys() else "",
         sequences=json.loads(row["sequences_json"] or "[]"),
         command=json.loads(row["command_json"] or "[]"),
     )
@@ -137,9 +140,25 @@ class JobStore:
 
     # -- schema ---------------------------------------------------------
     def migrate(self) -> None:
+        """Create or upgrade the schema.
+
+        Migrations are additive only, so an existing job history is never
+        rewritten or lost when the server is upgraded.
+        """
         with self._lock:
             self._conn.executescript(_SCHEMA)
             current = self._conn.execute("PRAGMA user_version").fetchone()[0]
+
+            if current < 2:
+                existing = {
+                    row["name"]
+                    for row in self._conn.execute("PRAGMA table_info(jobs)").fetchall()
+                }
+                if "submitted_by" not in existing:
+                    self._conn.execute(
+                        "ALTER TABLE jobs ADD COLUMN submitted_by TEXT NOT NULL DEFAULT ''"
+                    )
+
             if current < SCHEMA_VERSION:
                 self._conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
             self._conn.commit()
@@ -164,6 +183,7 @@ class JobStore:
         map_filename: str,
         overwrite: bool,
         sequences: list[dict[str, Any]],
+        submitted_by: str = "",
         job_id: str | None = None,
     ) -> Job:
         job_id = job_id or str(uuid.uuid4())
@@ -174,8 +194,9 @@ class JobStore:
                 INSERT INTO jobs (
                     id, title, note, entry_name, status, run_mode, inference_mode,
                     gpu_index, stage, created_at, resolution, contour_level,
-                    total_seq_len, map_filename, overwrite, sequences_json
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    total_seq_len, map_filename, overwrite, sequences_json,
+                    submitted_by
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     job_id,
@@ -194,6 +215,7 @@ class JobStore:
                     map_filename,
                     int(overwrite),
                     json.dumps(sequences),
+                    submitted_by,
                 ),
             )
             self._conn.commit()

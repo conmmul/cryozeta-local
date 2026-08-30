@@ -16,6 +16,7 @@
         <th>Job</th>
         <th>Status</th>
         <th>Stage</th>
+        {% if viewer %}<th>Submitted by</th>{% endif %}
         <th>GPU</th>
         <th>Submitted</th>
         <th>Finished</th>
@@ -41,6 +42,9 @@
           {% endif %}
         </td>
         <td class="hint">{{ job.stage or '--' }}</td>
+        {% if viewer %}
+        <td class="hint">{{ job.submitted_by or '--' }}</td>
+        {% endif %}
         <td class="num">{{ job.gpu_index if job.gpu_index is not none else '--' }}</td>
         <td class="num hint">{{ job.created_at|fmt_time }}</td>
         <td class="num hint">{{ job.finished_at|fmt_time }}</td>

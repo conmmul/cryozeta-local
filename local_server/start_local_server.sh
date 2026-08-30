@@ -11,6 +11,7 @@
 #   ./start_local_server.sh --port 8080
 #   ./start_local_server.sh --foreground    # do not daemonise
 #   ./start_local_server.sh --skip-install  # do not touch the virtualenv
+#   ./start_local_server.sh --tailscale     # publish to your tailnet (HTTPS)
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,6 +23,7 @@ DATA_ROOT="${CRYOZETA_WEB_DATA_ROOT:-$HOME/cryozeta-web-data}"
 VENV_DIR="${CRYOZETA_WEB_VENV:-$SCRIPT_DIR/.venv}"
 FOREGROUND=0
 SKIP_INSTALL=0
+TAILSCALE=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -30,6 +32,7 @@ while [ $# -gt 0 ]; do
         --data-root)     DATA_ROOT="$2"; shift 2 ;;
         --foreground|-f) FOREGROUND=1; shift ;;
         --skip-install)  SKIP_INSTALL=1; shift ;;
+        --tailscale)     TAILSCALE=1; shift ;;
         -h|--help)
             sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
@@ -115,6 +118,26 @@ fi
 PYTHON="$VENV_DIR/bin/python"
 [ -x "$PYTHON" ] || PYTHON="$(command -v python3)"
 
+# ── Optional: publish to a Tailscale tailnet ─────────────────────────────────
+# The app itself stays bound to loopback. `tailscale serve` terminates HTTPS
+# and forwards to it, so the only people who can reach it are members of your
+# tailnet, already authenticated by Tailscale.
+if [ "$TAILSCALE" -eq 1 ]; then
+    if ! command -v tailscale >/dev/null 2>&1; then
+        echo "error: --tailscale given but the tailscale binary was not found." >&2
+        echo "       Install it from https://tailscale.com/download and run 'tailscale up'." >&2
+        exit 69
+    fi
+    if ! tailscale status >/dev/null 2>&1; then
+        echo "error: tailscale is installed but this machine is not connected." >&2
+        echo "       Run: sudo tailscale up" >&2
+        exit 69
+    fi
+    # Identity headers injected by the local serve proxy become trustworthy.
+    export CRYOZETA_WEB_TRUST_TAILSCALE_HEADERS=1
+    echo "==> Tailscale mode: jobs will be attributed to the submitting user"
+fi
+
 # ── Data directories and database ────────────────────────────────────────────
 export CRYOZETA_WEB_HOST="$HOST"
 export CRYOZETA_WEB_PORT="$PORT"
@@ -172,6 +195,26 @@ else
         echo "==> Running in the background (pid $(cat "$PID_FILE"))"
         echo "==> Server log: $LOG_FILE"
         echo "==> Stop with: ./stop_local_server.sh"
+
+        if [ "$TAILSCALE" -eq 1 ]; then
+            echo "==> Publishing to your tailnet via 'tailscale serve'"
+            if tailscale serve --bg --https=443 "http://127.0.0.1:${PORT}" >/dev/null 2>&1; then
+                TS_HOST="$(tailscale status --json 2>/dev/null \
+                    | "$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))' \
+                    2>/dev/null || true)"
+                if [ -n "$TS_HOST" ]; then
+                    echo
+                    echo "    Lab members on your tailnet can now open:"
+                    echo "        https://${TS_HOST}"
+                    echo
+                fi
+                echo "==> Stop publishing with: tailscale serve --https=443 off"
+            else
+                echo "WARNING: 'tailscale serve' failed. HTTPS certificates must be" >&2
+                echo "         enabled for your tailnet (Admin console -> DNS -> HTTPS)." >&2
+                echo "         The server is still reachable locally at $URL" >&2
+            fi
+        fi
     else
         echo "error: the server exited immediately. Last lines of $LOG_FILE:" >&2
         tail -20 "$LOG_FILE" >&2

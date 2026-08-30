@@ -26,6 +26,7 @@ generates CryoZeta's input JSON and invokes the repository's own
 - [Recovering from interrupted jobs](#recovering-from-interrupted-jobs)
 - [Troubleshooting](#troubleshooting)
 - [Changing the port](#changing-the-port)
+- [Sharing with your lab (Tailscale)](#sharing-with-your-lab-tailscale)
 - [Remote access and LAN exposure](#remote-access-and-lan-exposure)
 - [Configuration reference](#configuration-reference)
 - [Testing](#testing)
@@ -441,13 +442,110 @@ argument in `ExecStart=`.
 
 ---
 
+## Sharing with your lab (Tailscale)
+
+This is the supported way to let lab members use the server. It publishes over
+HTTPS to your private tailnet, without opening a port to the internet and
+without a sysadmin, a certificate or a public DNS record.
+
+The app itself **stays bound to 127.0.0.1**. `tailscale serve` terminates TLS
+and forwards to it, so the only people who can reach it are members of your
+tailnet, whom Tailscale has already authenticated.
+
+### One-time setup
+
+On the GPU workstation:
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+```
+
+In the [Tailscale admin console](https://login.tailscale.com/admin/dns), enable
+**MagicDNS** and **HTTPS Certificates** (DNS → HTTPS Certificates). `tailscale
+serve` cannot issue an HTTPS URL without this.
+
+Then invite lab members to the tailnet. Each installs Tailscale and signs in;
+no further per-person setup is needed.
+
+### Starting it
+
+```bash
+./start_local_server.sh --tailscale
+```
+
+The script verifies Tailscale is installed and connected, starts the server on
+loopback, publishes it, and prints the URL, which looks like:
+
+> **https://gpu-workstation.tailnet-name.ts.net**
+
+Anyone on the tailnet can open that from a laptop, at home or on campus.
+
+To stop publishing (the server keeps running locally):
+
+```bash
+tailscale serve --https=443 off
+```
+
+`./stop_local_server.sh` withdraws it automatically.
+
+### What lab members see
+
+Jobs become **attributed**. The submitter's Tailscale login is recorded and
+shown in the header, in a "Submitted by" column on the Jobs page, and on each
+job's detail page. Existing databases are upgraded in place and old jobs simply
+show a blank submitter.
+
+### Understand the trust model before you rely on it
+
+| Property | Behaviour |
+|---|---|
+| Who can reach it | Anyone on your tailnet, and nobody else |
+| Who can submit jobs | Anyone on your tailnet |
+| Who can see results | **Everyone** on your tailnet, including other people's jobs and uploaded maps |
+| Who can cancel jobs | **Anyone** on your tailnet, including other people's jobs |
+| Identity | Recorded for attribution; it is **not** an access control |
+
+There are still no per-user permissions. Identity answers "who ran this?", not
+"who is allowed to?". **The tailnet boundary is the security control** — treat
+tailnet membership as equivalent to a shell account on the workstation, because
+in practice submitting a job runs code on it.
+
+If you need per-user isolation or quotas, that is a larger change than this
+wrapper makes; say so and it can be designed.
+
+> ### ⚠️ Do not use Tailscale Funnel
+>
+> `tailscale funnel` publishes to the **public internet**. Because this server
+> has no authentication, that would let anyone who finds the hostname upload
+> files, read every result and consume your GPUs. Use `tailscale serve`, which
+> is tailnet-only, and which is what `--tailscale` configures.
+
+### How identity is established, and why it cannot be spoofed
+
+`tailscale serve` injects a `Tailscale-User-Login` header. That header is only
+believed when **both** hold:
+
+1. the operator explicitly enabled Tailscale mode
+   (`CRYOZETA_WEB_TRUST_TAILSCALE_HEADERS=1`, set by `--tailscale`), and
+2. the request arrived from loopback, i.e. from the local proxy.
+
+Without both, the header is ignored — otherwise anyone who could reach the port
+could impersonate a colleague by setting a header themselves. When the app is
+instead bound directly to the tailnet address, identity comes from `tailscale
+whois` on the real peer IP rather than from any header.
+
+
 ## Remote access and LAN exposure
 
 The server binds **127.0.0.1** by default and **refuses to start on any other
 address** unless you explicitly opt in. Both `start_local_server.sh` and the
 application itself enforce this.
 
-### Recommended: SSH tunnel
+### For a single user: SSH tunnel
+
+To share with a lab, prefer
+[Tailscale](#sharing-with-your-lab-tailscale). For just yourself:
 
 The GPU workstation is usually not the machine you browse from. Do not expose
 the server — forward the port instead:
@@ -509,6 +607,7 @@ All settings are environment variables prefixed `CRYOZETA_WEB_`.
 | `MAX_TOTAL_SEQ_LEN` | `20000` | Rejects absurd submissions |
 | `LARGE_THRESHOLD` | `2800` | Large/cycle recommendation threshold |
 | `CANCEL_GRACE_SECONDS` | `20` | SIGTERM → SIGKILL grace period |
+| `TRUST_TAILSCALE_HEADERS` | `0` | Trust `tailscale serve` identity headers from loopback |
 | `ALLOW_REMOTE_MSA` | `0` | Reserved for a future external MSA backend |
 
 ---

@@ -22,6 +22,8 @@
     <a href="/preflight" class="{{ 'active' if request.url.path == '/preflight' else '' }}">System</a>
   </nav>
   <div class="hostinfo">
+    {% if viewer %}<span title="Identified via {{ identity_source }}">{{ viewer }}</span>
+    <span style="opacity:.4">&middot;</span>{% endif %}
     {% if nvidia and nvidia.gpus %}
       <span title="Detected on this machine">{{ nvidia.gpus|length }} GPU{{ '' if nvidia.gpus|length == 1 else 's' }}</span>
     {% else %}

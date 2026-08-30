@@ -115,6 +115,14 @@ class Settings:
         default_factory=lambda: _env_int("CANCEL_GRACE_SECONDS", 20)
     )
 
+    # --- Multi-user / tailnet publishing ----------------------------------
+    # When enabled, identity headers injected by `tailscale serve` are trusted,
+    # but only for requests arriving from loopback (i.e. from the local proxy).
+    # Off by default: an unconditionally trusted header is spoofable.
+    trust_tailscale_headers: bool = field(
+        default_factory=lambda: _env_bool("TRUST_TAILSCALE_HEADERS", False)
+    )
+
     # --- Optional external MSA backend -----------------------------------
     # Off by default and must be explicitly enabled: it transmits sequences to
     # a third-party server, which contradicts local-only operation.

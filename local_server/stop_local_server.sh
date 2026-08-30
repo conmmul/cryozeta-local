@@ -46,6 +46,14 @@ if [ "$KILL_JOBS" -eq 1 ]; then
     done
 fi
 
+# Stop publishing to the tailnet first, so nobody hits a dead proxy.
+if command -v tailscale >/dev/null 2>&1; then
+    if tailscale serve status 2>/dev/null | grep -q "127.0.0.1:"; then
+        echo "==> Withdrawing tailscale serve"
+        tailscale serve --https=443 off >/dev/null 2>&1 || true
+    fi
+fi
+
 echo "==> Stopping server (pid $PID)"
 kill -TERM "$PID" 2>/dev/null || true
 

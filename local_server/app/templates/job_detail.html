@@ -70,6 +70,9 @@
         <dt>Inference mode</dt><dd class="mono">{{ job.inference_mode.value }}</dd>
         {% endif %}
         <dt>Total length</dt><dd>{{ job.total_seq_len }} residues/nt</dd>
+        {% if job.submitted_by %}
+        <dt>Submitted by</dt><dd>{{ job.submitted_by }}</dd>
+        {% endif %}
         <dt>Submitted</dt><dd>{{ job.created_at|fmt_time }}</dd>
         <dt>Started</dt><dd>{{ job.started_at|fmt_time }}</dd>
         <dt>Finished</dt><dd>{{ job.finished_at|fmt_time }}</dd>

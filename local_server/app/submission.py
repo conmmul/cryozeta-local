@@ -85,6 +85,7 @@ class SubmissionRequest:
     run_mode: RunMode = RunMode.STANDARD
     inference_mode: InferenceMode = InferenceMode.COMBINED
     overwrite: bool = False
+    submitted_by: str = ""
     model_seeds: list[int] = field(default_factory=list)
 
 
@@ -299,6 +300,7 @@ def prepare_job(
                     "needs_pairing_msa": needs_pairing,
                     "sequences": sequences_meta,
                     "map_filename": safe_map_name,
+                    "submitted_by": request.submitted_by,
                 },
                 indent=2,
             ),
@@ -318,6 +320,7 @@ def prepare_job(
             map_filename=safe_map_name,
             overwrite=request.overwrite,
             sequences=sequences_meta,
+            submitted_by=request.submitted_by,
             job_id=job_id,
         )
     except Exception:
