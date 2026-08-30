@@ -115,6 +115,24 @@ class Settings:
         default_factory=lambda: _env_int("CANCEL_GRACE_SECONDS", 20)
     )
 
+    # --- Authentication ---------------------------------------------------
+    # Path to a file containing a PBKDF2 hash produced by `cli.py set-password`.
+    # When set, every page requires a login. Binding a non-loopback address
+    # requires either this or an explicit unauthenticated override.
+    passphrase_file: Path = field(
+        default_factory=lambda: Path(
+            _env("PASSPHRASE_FILE", "")
+            or str(
+                Path(_env("DATA_ROOT", str(Path.home() / "cryozeta-web-data")))
+                .expanduser()
+                / "passphrase.hash"
+            )
+        ).expanduser()
+    )
+    session_max_age: int = field(
+        default_factory=lambda: _env_int("SESSION_MAX_AGE", 14 * 24 * 3600)
+    )
+
     # --- Multi-user / tailnet publishing ----------------------------------
     # When enabled, identity headers injected by `tailscale serve` are trusted,
     # but only for requests arriving from loopback (i.e. from the local proxy).
@@ -159,6 +177,22 @@ class Settings:
 
     def is_loopback(self) -> bool:
         return self.host in {"127.0.0.1", "localhost", "::1"}
+
+    @property
+    def secret_file(self) -> Path:
+        return self.run_dir / "session.key"
+
+    def passphrase_hash(self) -> str | None:
+        """The stored passphrase hash, or None when no passphrase is set."""
+        try:
+            value = self.passphrase_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+        return value or None
+
+    def auth_required(self) -> bool:
+        """Authentication is on whenever a passphrase has been configured."""
+        return self.passphrase_hash() is not None
 
 
 _settings: Settings | None = None

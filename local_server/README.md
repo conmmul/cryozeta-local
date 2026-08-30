@@ -26,7 +26,7 @@ generates CryoZeta's input JSON and invokes the repository's own
 - [Recovering from interrupted jobs](#recovering-from-interrupted-jobs)
 - [Troubleshooting](#troubleshooting)
 - [Changing the port](#changing-the-port)
-- [Sharing with your lab (Tailscale)](#sharing-with-your-lab-tailscale)
+- [Sharing with your lab](#sharing-with-your-lab)
 - [Remote access and LAN exposure](#remote-access-and-lan-exposure)
 - [Configuration reference](#configuration-reference)
 - [Testing](#testing)
@@ -515,99 +515,158 @@ argument in `ExecStart=`.
 
 ---
 
-## Sharing with your lab (Tailscale)
+## Sharing with your lab
 
-This is the supported way to let lab members use the server. It publishes over
-HTTPS to your private tailnet, without opening a port to the internet and
-without a sysadmin, a certificate or a public DNS record.
+Three options. Pick by what your server's network allows — the first is
+usually right if you already reach the machine over a VPN.
 
-The app itself **stays bound to 127.0.0.1**. `tailscale serve` terminates TLS
-and forwards to it, so the only people who can reach it are members of your
-tailnet, whom Tailscale has already authenticated.
+| | Server network changes | Who can reach it | Setup effort |
+|---|---|---|---|
+| **A. SSH tunnel** | none | anyone with SSH to the box | per-person, one command |
+| **B. Bind to the VPN interface + passphrase** | bind address only | anyone on the VPN, with the passphrase | one-time |
+| **C. Tailscale, userspace mode** | none | your tailnet | one-time |
 
-### One-time setup
-
-On the GPU workstation:
-
-```bash
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up
-```
-
-In the [Tailscale admin console](https://login.tailscale.com/admin/dns), enable
-**MagicDNS** and **HTTPS Certificates** (DNS → HTTPS Certificates). `tailscale
-serve` cannot issue an HTTPS URL without this.
-
-Then invite lab members to the tailnet. Each installs Tailscale and signs in;
-no further per-person setup is needed.
-
-### Starting it
-
-```bash
-./start_local_server.sh --tailscale
-```
-
-The script verifies Tailscale is installed and connected, starts the server on
-loopback, publishes it, and prints the URL, which looks like:
-
-> **https://gpu-workstation.tailnet-name.ts.net**
-
-Anyone on the tailnet can open that from a laptop, at home or on campus.
-
-To stop publishing (the server keeps running locally):
-
-```bash
-tailscale serve --https=443 off
-```
-
-`./stop_local_server.sh` withdraws it automatically.
-
-### What lab members see
-
-Jobs become **attributed**. The submitter's Tailscale login is recorded and
-shown in the header, in a "Submitted by" column on the Jobs page, and on each
-job's detail page. Existing databases are upgraded in place and old jobs simply
-show a blank submitter.
-
-### Understand the trust model before you rely on it
-
-| Property | Behaviour |
-|---|---|
-| Who can reach it | Anyone on your tailnet, and nobody else |
-| Who can submit jobs | Anyone on your tailnet |
-| Who can see results | **Everyone** on your tailnet, including other people's jobs and uploaded maps |
-| Who can cancel jobs | **Anyone** on your tailnet, including other people's jobs |
-| Identity | Recorded for attribution; it is **not** an access control |
-
-There are still no per-user permissions. Identity answers "who ran this?", not
-"who is allowed to?". **The tailnet boundary is the security control** — treat
-tailnet membership as equivalent to a shell account on the workstation, because
-in practice submitting a job runs code on it.
-
-If you need per-user isolation or quotas, that is a larger change than this
-wrapper makes; say so and it can be designed.
-
-> ### ⚠️ Do not use Tailscale Funnel
+> ### ⚠️ If you reach this server through a VPN, do not run plain `tailscale up`
 >
-> `tailscale funnel` publishes to the **public internet**. Because this server
-> has no authentication, that would let anyone who finds the hostname upload
-> files, read every result and consume your GPUs. Use `tailscale serve`, which
-> is tailnet-only, and which is what `--tailscale` configures.
+> Normal Tailscale creates a TUN device, edits the kernel routing table, and
+> rewrites `/etc/resolv.conf` for MagicDNS. On a VPN-reachable server that can
+> break resolution of internal hostnames or capture routes to campus subnets —
+> which can cut your own SSH access. Use **option C** below, which cannot do
+> any of that, or avoid Tailscale entirely with **A** or **B**.
 
-### How identity is established, and why it cannot be spoofed
+---
 
-`tailscale serve` injects a `Tailscale-User-Login` header. That header is only
-believed when **both** hold:
+### Option A — SSH tunnel (no server changes at all)
 
-1. the operator explicitly enabled Tailscale mode
-   (`CRYOZETA_WEB_TRUST_TAILSCALE_HEADERS=1`, set by `--tailscale`), and
-2. the request arrived from loopback, i.e. from the local proxy.
+If lab members already have SSH access, this is the safest thing available and
+needs nothing installed or configured on the server. The app stays on loopback;
+SSH does the authentication and the encryption.
 
-Without both, the header is ignored — otherwise anyone who could reach the port
-could impersonate a colleague by setting a header themselves. When the app is
-instead bound directly to the tailnet address, identity comes from `tailscale
-whois` on the real peer IP rather than from any header.
+Each person runs, on their own laptop:
 
+```bash
+ssh -N -L 8000:127.0.0.1:8000 you@gpu-server
+```
+
+then opens **http://127.0.0.1:8000**. Works through your existing VPN, because
+it is just an SSH session.
+
+Nothing on the server is touched, so this cannot interfere with your VPN.
+
+---
+
+### Option B — bind to the VPN interface, behind a passphrase
+
+Use this when lab members have VPN access but you do not want to hand out SSH
+accounts. The VPN is the outer perimeter; the passphrase is the inner one,
+because "everyone on the university VPN" is far too broad to be the only
+control.
+
+Set a passphrase:
+
+```bash
+cd local_server
+.venv/bin/python -m app.cli set-password
+```
+
+Then bind to the interface your VPN clients reach. Prefer the specific address
+over `0.0.0.0`, so you do not also expose it on any other network the machine
+is attached to:
+
+```bash
+./start_local_server.sh --host 10.x.x.x     # your VPN-facing address
+```
+
+`ip -brief addr` will show you which address that is.
+
+The server **refuses to bind a non-loopback address until a passphrase is set**.
+That check is deliberate: it is the difference between "the lab can use this"
+and "anyone on campus can run code on your GPUs".
+
+What you get:
+
+- every page requires a login; the session is a signed, HttpOnly cookie
+- the passphrase is stored only as a PBKDF2-SHA256 hash (480,000 rounds), never
+  in plaintext
+- failed logins are rate-limited per client address, locking out for 5 minutes
+  after 8 failures
+
+Managing it:
+
+```bash
+.venv/bin/python -m app.cli set-password       # set or change
+.venv/bin/python -m app.cli clear-sessions     # sign everyone out
+.venv/bin/python -m app.cli disable-password   # remove (back to loopback-only)
+```
+
+> Traffic is plain HTTP. Inside a VPN tunnel that is usually acceptable, but the
+> passphrase does cross the VPN in the clear. For HTTPS, put nginx or Caddy in
+> front, or use option A or C.
+
+---
+
+### Option C — Tailscale in userspace mode (no routing or DNS changes)
+
+Gives every lab member an HTTPS URL without SSH accounts, and — unlike normal
+Tailscale — **cannot affect this machine's networking**.
+
+```bash
+cd local_server
+./publish_tailscale.sh start
+```
+
+It runs its own `tailscaled` with `--tun=userspace-networking`, which means:
+
+- no TUN device is created
+- the kernel routing table is never modified
+- `/etc/resolv.conf` is never touched
+- it does not need root
+
+Tailscale can then do exactly one thing: accept inbound tailnet connections and
+proxy them to `127.0.0.1`. It has no mechanism to disturb your SSH session, your
+VPN, or your DNS. Verify for yourself afterwards:
+
+```bash
+ip route            # unchanged
+cat /etc/resolv.conf   # unchanged
+```
+
+The trade-off is that this machine cannot *initiate* connections to other
+tailnet nodes by tailnet address. That does not matter here — we only need
+inbound.
+
+On first run it prints a login URL; open it in any browser to authorise the
+machine. After that:
+
+```bash
+./publish_tailscale.sh status
+./publish_tailscale.sh stop     # withdraw and disconnect
+```
+
+Requires MagicDNS and **HTTPS Certificates** enabled for your tailnet
+([admin console](https://login.tailscale.com/admin/dns)).
+
+Jobs become attributed: the submitter's Tailscale login is recorded and shown
+in the header, in a "Submitted by" column, and on each job page. Tailnet users
+are not asked for the passphrase as well — Tailscale has already authenticated
+them.
+
+> ### ⚠️ Never use `tailscale funnel`
+>
+> Funnel publishes to the **public internet**. `serve`, which is what these
+> scripts use, is tailnet-only.
+
+---
+
+### What none of these give you
+
+There are still no per-user permissions. Anyone who gets in can see every
+result and cancel anyone's job. Identity is recorded for **attribution, not
+authorisation**.
+
+Treat access to this server as equivalent to a shell account on the
+workstation, because submitting a job runs code on it. If you need per-user
+isolation or GPU quotas, that is a larger change than this wrapper makes.
 
 ## Remote access and LAN exposure
 
@@ -617,8 +676,8 @@ application itself enforce this.
 
 ### For a single user: SSH tunnel
 
-To share with a lab, prefer
-[Tailscale](#sharing-with-your-lab-tailscale). For just yourself:
+See [Sharing with your lab](#sharing-with-your-lab) for the options. For
+just yourself:
 
 The GPU workstation is usually not the machine you browse from. Do not expose
 the server — forward the port instead:
@@ -681,6 +740,8 @@ All settings are environment variables prefixed `CRYOZETA_WEB_`.
 | `LARGE_THRESHOLD` | `2800` | Large/cycle recommendation threshold |
 | `CANCEL_GRACE_SECONDS` | `20` | SIGTERM → SIGKILL grace period |
 | `TRUST_TAILSCALE_HEADERS` | `0` | Trust `tailscale serve` identity headers from loopback |
+| `PASSPHRASE_FILE` | `<data root>/passphrase.hash` | Where the login hash is stored |
+| `SESSION_MAX_AGE` | `1209600` | Session lifetime in seconds (14 days) |
 | `ALLOW_REMOTE_MSA` | `0` | Reserved for a future external MSA backend |
 
 ---

@@ -17,6 +17,7 @@ import sys
 import time
 from pathlib import Path
 
+from .auth import AuthError, hash_passphrase
 from .config import get_settings
 from .db import JobStore
 from .preflight import format_report, run_preflight
@@ -214,6 +215,66 @@ def cmd_cancel(args: argparse.Namespace) -> int:
     return 1
 
 
+
+def cmd_set_password(args: argparse.Namespace) -> int:
+    """Set the passphrase required when the server is network-reachable."""
+    import getpass
+    import os
+
+    settings = get_settings()
+    settings.ensure_dirs()
+
+    if args.passphrase:
+        # Accepting it as a flag is convenient for automation but leaks the
+        # value into shell history and the process list, so say so.
+        print(
+            "warning: passing the passphrase as an argument exposes it to your "
+            "shell history and to other users via the process list.",
+            file=sys.stderr,
+        )
+        passphrase = args.passphrase
+    else:
+        passphrase = getpass.getpass("New lab passphrase: ")
+        if passphrase != getpass.getpass("Repeat: "):
+            print("error: passphrases did not match", file=sys.stderr)
+            return 1
+
+    try:
+        digest = hash_passphrase(passphrase)
+    except AuthError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    target = settings.passphrase_file
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(digest + "\n")
+
+    print(f"passphrase set: {target}")
+    print("Authentication is now required for every page.")
+    print("Existing sessions stay valid; use 'clear-sessions' to revoke them.")
+    return 0
+
+
+def cmd_clear_sessions(args: argparse.Namespace) -> int:
+    """Invalidate every signed session cookie by rotating the secret."""
+    settings = get_settings()
+    settings.secret_file.unlink(missing_ok=True)
+    print("session key rotated; everyone must sign in again")
+    return 0
+
+
+def cmd_disable_password(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    if not settings.passphrase_file.is_file():
+        print("no passphrase is set")
+        return 0
+    settings.passphrase_file.unlink()
+    print("passphrase removed; the server will refuse a non-loopback bind again")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="cryozeta-web", description="CryoZeta local server"
@@ -252,6 +313,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--overwrite", action="store_true")
     p.add_argument("--wait", action="store_true", help="block until the job finishes")
     p.set_defaults(func=cmd_submit)
+
+    p = sub.add_parser(
+        "set-password", help="set the passphrase for network-reachable access"
+    )
+    p.add_argument(
+        "--passphrase",
+        help="supply non-interactively (exposed in shell history; prefer the prompt)",
+    )
+    p.set_defaults(func=cmd_set_password)
+
+    p = sub.add_parser("clear-sessions", help="sign everyone out")
+    p.set_defaults(func=cmd_clear_sessions)
+
+    p = sub.add_parser("disable-password", help="remove the passphrase")
+    p.set_defaults(func=cmd_disable_password)
 
     p = sub.add_parser("jobs", help="list jobs")
     p.add_argument("--limit", type=int, default=50)

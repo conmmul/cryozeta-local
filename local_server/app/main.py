@@ -14,6 +14,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import (
@@ -27,6 +28,15 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from .auth import (
+    SESSION_COOKIE,
+    RateLimiter,
+    is_public_path,
+    issue_session,
+    load_or_create_secret,
+    read_session,
+    verify_passphrase,
+)
 from .config import Settings, get_settings
 from .db import JobStore
 from .discovery import find_cryozeta_repo, query_nvidia_cached, select_pixi_env
@@ -56,6 +66,20 @@ class LanExposureError(RuntimeError):
     pass
 
 
+def _safe_next(target: str) -> str:
+    """Only allow same-site relative redirects after login.
+
+    Prevents /login?next=https://evil.example from turning the login form into
+    an open redirect.
+    """
+    if not target or not target.startswith("/") or target.startswith("//"):
+        return "/"
+    parsed = urlparse(target)
+    if parsed.scheme or parsed.netloc:
+        return "/"
+    return target
+
+
 def _resolve_gpus(settings: Settings) -> list[int]:
     """Decide which GPU indices this server schedules onto."""
     if settings.gpus:
@@ -77,14 +101,23 @@ def create_app(
     settings = settings or get_settings()
     settings.ensure_dirs()
 
-    if not settings.is_loopback() and not settings.allow_lan:
-        raise LanExposureError(
-            f"Refusing to bind {settings.host}: this server has no authentication. "
-            "Set CRYOZETA_WEB_ALLOW_LAN=1 to override, and read the security "
-            "warning in local_server/README.md first."
-        )
+    # A non-loopback bind is only safe with a passphrase. ALLOW_LAN remains as
+    # a deliberate, documented escape hatch for genuinely trusted networks.
+    if not settings.is_loopback() and not settings.auth_required():
+        if not settings.allow_lan:
+            raise LanExposureError(
+                f"Refusing to bind {settings.host} with no authentication.\n\n"
+                "  Anyone who can reach this address could run code on your GPUs "
+                "and read every result.\n\n"
+                "  Set a passphrase (recommended):\n"
+                "      python -m app.cli set-password\n\n"
+                "  Or, on a genuinely trusted network, override deliberately:\n"
+                "      export CRYOZETA_WEB_ALLOW_LAN=1"
+            )
 
     store = JobStore(settings.db_path)
+    session_secret = load_or_create_secret(settings.secret_file)
+    rate_limiter = RateLimiter()
     repo = find_cryozeta_repo(settings.cryozeta_repo)
     # The scheduler's GPU list is fixed at startup because one worker thread is
     # created per GPU. Everything the UI *displays*, though, is re-probed per
@@ -115,6 +148,38 @@ def create_app(
         store.close()
 
     app = FastAPI(title="CryoZeta local server", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def require_login(request: Request, call_next):
+        """Gate every page behind a session when a passphrase is configured.
+
+        A Tailscale-identified user is already authenticated by Tailscale, so
+        they are let through without a second login.
+        """
+        if not settings.auth_required() or is_public_path(request.url.path):
+            return await call_next(request)
+
+        if settings.trust_tailscale_headers and resolve_submitter(
+            client_host=request.client.host if request.client else None,
+            headers=request.headers,
+            trust_proxy_headers=True,
+        ):
+            return await call_next(request)
+
+        subject = read_session(
+            request.cookies.get(SESSION_COOKIE),
+            session_secret,
+            max_age=settings.session_max_age,
+        )
+        if subject is None:
+            target = request.url.path
+            if request.url.query:
+                target += f"?{request.url.query}"
+            return RedirectResponse(
+                url=f"/login?next={quote(target, safe='')}", status_code=303
+            )
+        return await call_next(request)
+
     app.state.settings = settings
     app.state.store = store
     app.state.manager = manager
@@ -162,6 +227,7 @@ def create_app(
                 headers=request.headers,
                 trust_proxy_headers=settings.trust_tailscale_headers,
             ),
+            "auth_required": settings.auth_required(),
             "identity_source": describe_source(
                 request.client.host if request.client else None,
                 settings.trust_tailscale_headers,
@@ -454,6 +520,64 @@ def create_app(
                 )
             },
         )
+
+    # ------------------------------------------------------------------
+    # Authentication
+    # ------------------------------------------------------------------
+    @app.get("/login", response_class=HTMLResponse)
+    def login_page(request: Request, next: str = "/"):
+        if not settings.auth_required():
+            return RedirectResponse(url="/", status_code=303)
+        return render(request, "login.html", error="", next_url=_safe_next(next))
+
+    @app.post("/login")
+    def login_submit(
+        request: Request, passphrase: str = Form(...), next: str = Form("/")
+    ):
+        if not settings.auth_required():
+            return RedirectResponse(url="/", status_code=303)
+
+        client = request.client.host if request.client else "unknown"
+        if wait := rate_limiter.retry_after(client):
+            return render(
+                request,
+                "login.html",
+                status_code=429,
+                error=f"Too many failed attempts. Try again in {wait} seconds.",
+                next_url=_safe_next(next),
+            )
+
+        stored = settings.passphrase_hash() or ""
+        if not verify_passphrase(passphrase, stored):
+            rate_limiter.record_failure(client)
+            return render(
+                request,
+                "login.html",
+                status_code=401,
+                error="Incorrect passphrase.",
+                next_url=_safe_next(next),
+            )
+
+        rate_limiter.record_success(client)
+        response = RedirectResponse(url=_safe_next(next), status_code=303)
+        response.set_cookie(
+            SESSION_COOKIE,
+            issue_session(session_secret),
+            max_age=settings.session_max_age,
+            httponly=True,
+            samesite="lax",
+            # Only mark Secure when the request actually arrived over HTTPS,
+            # otherwise the cookie would be dropped on a plain-HTTP tunnel.
+            secure=request.url.scheme == "https",
+            path="/",
+        )
+        return response
+
+    @app.post("/logout")
+    def logout():
+        response = RedirectResponse(url="/login", status_code=303)
+        response.delete_cookie(SESSION_COOKIE, path="/")
+        return response
 
     @app.get("/healthz")
     def healthz():

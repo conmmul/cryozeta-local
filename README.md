@@ -70,17 +70,20 @@ Open **http://127.0.0.1:8000**
 
 ## Sharing it with a lab
 
-```bash
-./start_local_server.sh --tailscale
-```
+Three options, documented in
+[local_server/README.md](local_server/README.md#sharing-with-your-lab):
 
-Publishes over HTTPS to your private Tailscale network, so lab members can use
-it from their own laptops. It is **not** exposed to the public internet, and
-the app itself stays bound to loopback.
+- **SSH tunnel** — nothing to configure on the server
+- **VPN interface + passphrase** — `app.cli set-password`, then bind to your VPN address
+- **Tailscale userspace mode** — `./publish_tailscale.sh start`, an HTTPS URL for the tailnet
 
-Read the security model first: anyone on the tailnet can see every result and
-cancel any job. See
-[local_server/README.md](local_server/README.md#sharing-with-your-lab-tailscale).
+If you reach the server through a VPN, **do not run plain `tailscale up`**: it
+edits the routing table and `/etc/resolv.conf` and can cut your own SSH access.
+`publish_tailscale.sh` uses userspace mode, which cannot touch either.
+
+Binding anywhere other than loopback requires a passphrase. Note that none of
+these provide per-user permissions: anyone who gets in can see every result and
+cancel any job.
 
 ## Documentation
 

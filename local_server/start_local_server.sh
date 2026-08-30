@@ -133,6 +133,18 @@ if [ "$TAILSCALE" -eq 1 ]; then
         echo "       Run: sudo tailscale up" >&2
         exit 69
     fi
+    cat <<'NOTE'
+      Note: this uses Tailscale in normal (kernel) mode, which creates a TUN
+      device, edits the routing table and rewrites /etc/resolv.conf.
+      On a server you reach through an institutional VPN that can break DNS
+      for internal hosts or capture routes to campus subnets.
+
+      If this machine is only reachable via a VPN, use the userspace mode
+      instead -- it cannot touch routing or DNS:
+
+          ./publish_tailscale.sh start
+
+NOTE
     # Identity headers injected by the local serve proxy become trustworthy.
     export CRYOZETA_WEB_TRUST_TAILSCALE_HEADERS=1
     echo "==> Tailscale mode: jobs will be attributed to the submitting user"

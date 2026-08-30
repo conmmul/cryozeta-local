@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Sign in{% endblock %}
+
+{% block content %}
+<div style="max-width:420px; margin:8vh auto;">
+  <div class="page-head" style="text-align:center">
+    <h1>CryoZeta</h1>
+    <p>This server is reachable over the network, so it requires a passphrase.</p>
+  </div>
+
+  {% if error %}
+  <div class="alert alert-error">{{ error }}</div>
+  {% endif %}
+
+  <section class="panel">
+    <h2>Sign in</h2>
+    <div class="panel-body">
+      <form method="post" action="/login">
+        <input type="hidden" name="next" value="{{ next_url }}">
+        <label for="passphrase">Lab passphrase</label>
+        <input type="password" id="passphrase" name="passphrase"
+               autocomplete="current-password" autofocus required>
+        <div class="hint">Shared with your lab by whoever runs this server.</div>
+        <div style="margin-top:16px">
+          <button type="submit" class="btn btn-primary" style="width:100%">Sign in</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <p class="hint" style="text-align:center">
+    Jobs run on this machine's GPUs. Nothing is sent to an external service.
+  </p>
+</div>
+{% endblock %}
