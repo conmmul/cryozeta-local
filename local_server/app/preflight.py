@@ -7,6 +7,7 @@ up. Nothing here mutates the system.
 
 from __future__ import annotations
 
+import concurrent.futures
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -66,6 +67,44 @@ class PreflightReport:
         self.checks.append(Check(name, status, detail, remedy))
 
 
+def _with_timeout(fn, seconds: float, default=None):
+    """Run ``fn`` in a worker thread and give up after ``seconds``.
+
+    Guards against calls that can block indefinitely rather than fail --
+    notably ``shutil.disk_usage`` on a stale NFS mount, which is a realistic
+    condition on a shared lab workstation and would otherwise hang the page.
+    """
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    try:
+        future = executor.submit(fn)
+        return future.result(timeout=seconds)
+    except concurrent.futures.TimeoutError:
+        return default
+    finally:
+        # Do not wait: if the call is wedged, the thread is unreclaimable.
+        executor.shutdown(wait=False)
+
+
+def _guard(report: PreflightReport, name: str, fn, default=None):
+    """Run one probe in isolation.
+
+    The System page exists to diagnose broken machines, so it must not itself
+    break on one. A probe that raises (hung NFS mount, permission error, an
+    nvidia-smi that returns something unparseable) becomes a FAIL row and the
+    rest of the report still renders.
+    """
+    try:
+        return fn()
+    except Exception as exc:  # noqa: BLE001 - deliberately broad
+        report.add(
+            name,
+            FAIL,
+            f"this check could not run: {type(exc).__name__}: {exc}",
+            "The remaining checks below are still valid.",
+        )
+        return default
+
+
 def run_preflight(settings: Settings | None = None) -> PreflightReport:
     settings = settings or get_settings()
     report = PreflightReport()
@@ -86,7 +125,9 @@ def run_preflight(settings: Settings | None = None) -> PreflightReport:
         report.add("Operating system", OK, f"Linux {platform.release()} ({platform.machine()})")
 
     # -- GPU ------------------------------------------------------------
-    nvidia = query_nvidia_cached()
+    nvidia = _guard(report, "NVIDIA GPU", query_nvidia_cached) or NvidiaInfo(
+        available=False, error="GPU probe failed"
+    )
     report.nvidia = nvidia
     if not nvidia.available:
         report.add(
@@ -126,7 +167,7 @@ def run_preflight(settings: Settings | None = None) -> PreflightReport:
     )
 
     # -- Pixi -----------------------------------------------------------
-    pixi = find_pixi()
+    pixi = _guard(report, "Pixi", find_pixi)
     report.pixi_path = pixi
     if pixi is None:
         report.add(
@@ -139,7 +180,9 @@ def run_preflight(settings: Settings | None = None) -> PreflightReport:
         report.add("Pixi", OK, str(pixi))
 
     # -- CryoZeta repository --------------------------------------------
-    repo = find_cryozeta_repo(settings.cryozeta_repo)
+    repo = _guard(
+        report, "CryoZeta repository", lambda: find_cryozeta_repo(settings.cryozeta_repo)
+    )
     report.repo = repo
     if repo is None:
         report.add(
@@ -153,7 +196,9 @@ def run_preflight(settings: Settings | None = None) -> PreflightReport:
 
     report.add("CryoZeta repository", OK, str(repo))
 
-    install = inspect_install(repo)
+    install = _guard(
+        report, "CryoZeta installation", lambda: inspect_install(repo)
+    ) or InstallState(repo=repo)
     report.install = install
 
     if install.assets_ok:
@@ -208,8 +253,16 @@ def run_preflight(settings: Settings | None = None) -> PreflightReport:
     probe = settings.data_root
     while not probe.exists() and probe != probe.parent:
         probe = probe.parent
-    try:
-        free_gib = shutil.disk_usage(probe).free / (1024**3)
+    usage = _with_timeout(lambda: shutil.disk_usage(probe), seconds=5.0)
+    if usage is None:
+        report.add(
+            "Data root free space",
+            WARN,
+            f"could not stat {probe} within 5s",
+            "The filesystem may be unresponsive (for example a stale NFS mount).",
+        )
+    else:
+        free_gib = usage.free / (1024**3)
         suffix = "" if probe == settings.data_root else f" (volume holding {probe})"
         report.add(
             "Data root free space",
@@ -217,8 +270,6 @@ def run_preflight(settings: Settings | None = None) -> PreflightReport:
             f"{free_gib:.1f} GiB free for {settings.data_root}{suffix}",
             "" if free_gib >= 50 else "Jobs can produce many GB; consider more space.",
         )
-    except OSError as exc:
-        report.add("Data root", FAIL, f"cannot stat {probe}: {exc}")
 
     return report
 

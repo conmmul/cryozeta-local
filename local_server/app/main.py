@@ -222,7 +222,21 @@ def create_app(
 
     @app.get("/preflight", response_class=HTMLResponse)
     def preflight_page(request: Request):
-        return render(request, "preflight.html", report=run_preflight(settings))
+        # This page diagnoses broken machines, so it must degrade to a
+        # readable error rather than a bare 500 that tells the user nothing.
+        try:
+            report = run_preflight(settings)
+        except Exception as exc:  # noqa: BLE001 - deliberately broad
+            import traceback
+
+            return render(
+                request,
+                "preflight_error.html",
+                status_code=500,
+                error=f"{type(exc).__name__}: {exc}",
+                traceback=traceback.format_exc(),
+            )
+        return render(request, "preflight.html", report=report)
 
     # ------------------------------------------------------------------
     # Submission

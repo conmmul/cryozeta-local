@@ -127,7 +127,9 @@ class NvidiaInfo:
             return 0
 
 
-def _run(cmd: list[str], timeout: int = 15) -> tuple[int, str, str]:
+# nvidia-smi can stall on a busy or wedged GPU; keep the ceiling low enough
+# that a page render stays responsive.
+def _run(cmd: list[str], timeout: int = 8) -> tuple[int, str, str]:
     try:
         proc = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout, shell=False

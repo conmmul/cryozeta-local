@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}System{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>System preflight</h1>
+  <p>The environment check itself failed to run.</p>
+</div>
+
+<div class="alert alert-error">
+  <strong>Preflight crashed: {{ error }}</strong>
+  This is a bug in the checker, not necessarily a problem with your CryoZeta
+  installation. Jobs may still run. Please report the trace below.
+</div>
+
+<section class="panel">
+  <h2>Traceback</h2>
+  <div class="panel-body">
+    <div class="logbox">{{ traceback }}</div>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>What still works</h2>
+  <div class="panel-body">
+    <p class="hint">
+      Run the same checks from a terminal, which prints the failure directly:
+    </p>
+    <div class="logbox">cd local_server &amp;&amp; ./preflight.sh</div>
+  </div>
+</section>
+{% endblock %}

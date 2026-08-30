@@ -141,3 +141,61 @@ class TestGpuProbeCaching:
             assert len(second.gpus) == 2
 
         discovery._NVIDIA_CACHE = None
+
+
+class TestPreflightRobustness:
+    """The System page must survive a machine that is itself broken."""
+
+    def test_a_crashing_probe_becomes_a_fail_row_not_a_500(self, settings):
+        from app.preflight import run_preflight
+
+        with patch(
+            "app.preflight.query_nvidia_cached",
+            side_effect=OSError("nvidia-smi: device busy"),
+        ):
+            report = run_preflight(settings)
+
+        assert any(
+            "could not run" in c.detail and c.status == "fail" for c in report.checks
+        )
+        # The remaining checks must still have run.
+        assert any(c.name == "CryoZeta repository" for c in report.checks)
+
+    def test_page_still_renders_when_a_probe_crashes(self, settings):
+        with patch(
+            "app.preflight.query_nvidia_cached",
+            side_effect=RuntimeError("boom"),
+        ):
+            app = create_app(settings, start_workers=False)
+            with TestClient(app) as c:
+                response = c.get("/preflight")
+        assert response.status_code == 200
+        assert "could not run" in response.text
+
+    def test_total_failure_renders_a_readable_error_page(self, settings):
+        with patch("app.main.run_preflight", side_effect=RuntimeError("total failure")):
+            app = create_app(settings, start_workers=False)
+            with TestClient(app) as c:
+                response = c.get("/preflight")
+        assert response.status_code == 500
+        assert "Preflight crashed" in response.text
+        assert "RuntimeError: total failure" in response.text
+        # The traceback must be shown so the failure is reportable.
+        assert "Traceback" in response.text
+
+    def test_a_wedged_filesystem_does_not_hang_the_page(self, settings):
+        """A stale NFS mount must time out, not block the request forever."""
+        import time as _time
+
+        def wedged(_path):
+            _time.sleep(30)
+
+        with patch("app.preflight.shutil.disk_usage", side_effect=wedged):
+            started = _time.monotonic()
+            from app.preflight import run_preflight
+
+            report = run_preflight(settings)
+            elapsed = _time.monotonic() - started
+
+        assert elapsed < 15, f"preflight blocked for {elapsed:.1f}s"
+        assert any("could not stat" in c.detail for c in report.checks)
