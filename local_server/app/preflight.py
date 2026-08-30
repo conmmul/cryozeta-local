@@ -146,8 +146,9 @@ def run_preflight(settings: Settings | None = None) -> PreflightReport:
                 f"compute capability {gpu.compute_cap}",
                 ""
                 if status == OK
-                else f"CryoZeta documents a {MIN_VRAM_GIB:.0f} GB minimum; "
-                "large complexes will run out of memory.",
+                else f"Below CryoZeta's documented {MIN_VRAM_GIB:.0f} GB minimum. "
+                "Smaller complexes still run fine; switch to large/cycle mode "
+                "earlier, e.g. CRYOZETA_WEB_LARGE_THRESHOLD=2000.",
             )
         report.add(
             "NVIDIA driver",

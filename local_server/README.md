@@ -45,6 +45,15 @@ These come from CryoZeta itself, not from this wrapper:
 | Driver | Must support CUDA 11.0 or newer (check `nvidia-smi`) |
 | Disk | Tens of GB. Weights alone are several GB; each job writes intermediate tensors. |
 
+**On GPUs smaller than 32 GB** (a 24 GB RTX 4090, for example) CryoZeta
+still works, but the practical complex-size ceiling is lower than upstream's
+~2,800-residue figure, which assumes 32 GB. Have the UI recommend large/cycle
+mode earlier by lowering the threshold:
+
+```bash
+export CRYOZETA_WEB_LARGE_THRESHOLD=2000
+```
+
 Capacity, per CryoZeta's own notes: roughly **2,800 residues/nucleotides** in
 standard mode. Above that, use large/cycle mode.
 
@@ -84,61 +93,80 @@ Verify the submodule actually populated — this must print the script, not
 ls cryozeta-local/external/CryoZeta/inference_demo.sh
 ```
 
-### 2. Check the machine
+### 2. Run the setup script
 
-Before installing anything, confirm the host can run CryoZeta at all:
+One command takes you from a fresh clone to a working install:
 
 ```bash
 cd cryozeta-local/local_server
-./preflight.sh
+./setup.sh
 ```
 
-This is read-only and changes nothing. It reports the GPU, VRAM, compute
-capability, driver version, the maximum CUDA version the driver supports, which
-Pixi environment will be selected, and what is still missing — with the exact
-command to fix each item. Exit status is 0 when the host is ready.
+It installs pixi if missing, installs the CUDA environment matching your GPU,
+downloads the model weights, builds TEASER++, creates the web server's
+virtualenv, and finishes by running the preflight so you can see the result.
 
-Expect it to fail on a laptop: CryoZeta is Linux-only and needs a 32 GB NVIDIA
-GPU.
-
-### 3. Install CryoZeta itself
-
-The web server does **not** install CryoZeta, and does not modify it. Run the
-upstream setup inside the submodule:
+Expect **15-40 minutes and several GB** on a first run, nearly all of it
+downloading weights. Every step is idempotent and skips work already done, so
+if it fails or you interrupt it, just run it again and it picks up where it
+left off.
 
 ```bash
-curl -fsSL https://pixi.sh/install.sh | bash
-cd cryozeta-local/external/CryoZeta
-pixi run setup
+./setup.sh --yes          # never prompt (unattended installs)
+./setup.sh --env cu11     # force a Pixi environment instead of auto-detecting
 ```
 
-`pixi run setup` installs dependencies, auto-detects your CUDA version,
-downloads the weights and bundled example from Hugging Face, and clones and
-builds TEASER++. Budget 15+ minutes and several GB.
+It prompts before the two steps that download and execute remote code
+(installing pixi, downloading weights). With no terminal attached those
+prompts default to **no**, so use `--yes` in a script.
 
-> Note: `assets/` is **not** in the git repository. The model weights and the
-> bundled example come from Hugging Face via this step, so a fresh clone has no
-> weights until you run it.
+When it finishes you should see:
+
+```
+Result: READY
+```
+
+### 3. Check it whenever you like
+
+`./preflight.sh` is read-only and re-runnable at any time. It reports the GPU,
+VRAM, compute capability, driver, the maximum CUDA version your driver
+supports, which Pixi environment will be used, and anything still missing --
+each with the exact command that fixes it. Exit status is 0 when ready.
+
+### 4. Start the web server
+
+```bash
+./start_local_server.sh
+```
+
+On first run this creates `local_server/.venv` if `setup.sh` has not already,
+installs FastAPI/Uvicorn/Jinja2, creates the data directories, initialises the
+SQLite database, and starts Uvicorn. The web dependencies live in **their own
+virtualenv**, never in CryoZeta's Pixi environment, so upgrading one cannot
+break the other.
+
+### Doing it by hand instead
+
+`setup.sh` is a wrapper around the upstream procedure. To run the steps
+yourself:
+
+```bash
+curl -fsSL https://pixi.sh/install.sh | bash      # install pixi
+cd cryozeta-local/external/CryoZeta
+pixi install -e default                            # or cu11 / cu13
+pixi run download-assets                           # weights, several GB
+pixi run build-teaser                              # needs cmake + a C++ compiler
+```
+
+> `assets/` is **not** in the git repository. Weights and the bundled example
+> come from Hugging Face via `download-assets`, so a fresh clone has none until
+> you run it.
 
 Confirm CryoZeta works on its own before involving the web server:
 
 ```bash
 bash external/CryoZeta/inference_demo.sh
 ```
-
-Then re-run `./preflight.sh` — it should now report **READY**.
-
-### 4. Start the web server
-
-```bash
-cd cryozeta-local/local_server
-./start_local_server.sh
-```
-
-On first run this creates `local_server/.venv`, installs FastAPI/Uvicorn/Jinja2,
-creates the data directories, initialises the SQLite database, and starts
-Uvicorn. The web dependencies are installed in **their own virtualenv**, never
-into CryoZeta's Pixi environment, so upgrading one cannot break the other.
 
 ### Finding CryoZeta
 

@@ -39,24 +39,31 @@ installed on macOS or Windows. Check any machine with:
 cd cryozeta-local/local_server && ./preflight.sh
 ```
 
+A 24 GB card (RTX 4090) works, but caps complex size below upstream's
+~2,800-residue figure; see the notes in
+[local_server/README.md](local_server/README.md#hardware-requirements).
+
 That prints the GPU, VRAM, compute capability, driver, the CUDA version your
 driver supports, which Pixi environment will be used, and whether the weights
 and TEASER++ are installed — and tells you how to fix anything missing.
 
 ## Set up
 
-Install CryoZeta itself (downloads several GB of model weights and builds
-TEASER++, ~15 minutes):
+One command does everything — installs pixi, installs the CUDA environment for
+your GPU, downloads the model weights, builds TEASER++, and sets up the web
+server:
 
 ```bash
-curl -fsSL https://pixi.sh/install.sh | bash
-cd cryozeta-local/external/CryoZeta && pixi run setup
+cd cryozeta-local/local_server && ./setup.sh
 ```
 
-Then start the web server:
+Expect 15–40 minutes and several GB on a first run. It is safe to re-run: every
+step skips work that is already done, so an interrupted install resumes.
+
+When it prints `Result: READY`, start the server:
 
 ```bash
-cd cryozeta-local/local_server && ./start_local_server.sh
+./start_local_server.sh
 ```
 
 Open **http://127.0.0.1:8000**
