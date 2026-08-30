@@ -62,14 +62,53 @@ whether the weights, TEASER++ and Pixi environments are installed.
 
 ## Installation
 
-### 1. Install CryoZeta itself
+### 1. Clone this repository
 
-The web server does **not** install CryoZeta. Follow the upstream procedure:
+CryoZeta is included as a **git submodule**, so clone recursively. A plain
+`git clone` leaves `external/CryoZeta/` empty and nothing will run.
+
+```bash
+git clone --recurse-submodules https://github.com/conmmul/cryozeta-local.git
+```
+
+If you already cloned without `--recurse-submodules`, fetch it afterwards:
+
+```bash
+git submodule update --init --recursive
+```
+
+Verify the submodule actually populated — this must print the script, not
+"No such file or directory":
+
+```bash
+ls cryozeta-local/external/CryoZeta/inference_demo.sh
+```
+
+### 2. Check the machine
+
+Before installing anything, confirm the host can run CryoZeta at all:
+
+```bash
+cd cryozeta-local/local_server
+./preflight.sh
+```
+
+This is read-only and changes nothing. It reports the GPU, VRAM, compute
+capability, driver version, the maximum CUDA version the driver supports, which
+Pixi environment will be selected, and what is still missing — with the exact
+command to fix each item. Exit status is 0 when the host is ready.
+
+Expect it to fail on a laptop: CryoZeta is Linux-only and needs a 32 GB NVIDIA
+GPU.
+
+### 3. Install CryoZeta itself
+
+The web server does **not** install CryoZeta, and does not modify it. Run the
+upstream setup inside the submodule:
 
 ```bash
 curl -fsSL https://pixi.sh/install.sh | bash
-git clone https://github.com/kiharalab/CryoZeta.git
-cd CryoZeta
+cd cryozeta-local/external/CryoZeta
 pixi run setup
 ```
 
@@ -77,16 +116,22 @@ pixi run setup
 downloads the weights and bundled example from Hugging Face, and clones and
 builds TEASER++. Budget 15+ minutes and several GB.
 
-Confirm it works before involving the web server:
+> Note: `assets/` is **not** in the git repository. The model weights and the
+> bundled example come from Hugging Face via this step, so a fresh clone has no
+> weights until you run it.
+
+Confirm CryoZeta works on its own before involving the web server:
 
 ```bash
-bash /path/to/CryoZeta/inference_demo.sh
+bash external/CryoZeta/inference_demo.sh
 ```
 
-### 2. Set up the web server
+Then re-run `./preflight.sh` — it should now report **READY**.
+
+### 4. Start the web server
 
 ```bash
-cd local_server
+cd cryozeta-local/local_server
 ./start_local_server.sh
 ```
 
@@ -101,7 +146,7 @@ The server locates the CryoZeta checkout at runtime, in this order:
 
 1. `CRYOZETA_WEB_REPO`
 2. `CRYOZETA_REPO` / `PIXI_PROJECT_ROOT`
-3. `../external/CryoZeta`, `../CryoZeta` relative to `local_server/`
+3. `../external/CryoZeta` (the submodule in this repository), `../CryoZeta`
 4. `./external/CryoZeta`, `./CryoZeta`, `~/CryoZeta`
 
 A directory counts as a CryoZeta checkout only if it contains
