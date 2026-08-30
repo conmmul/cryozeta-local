@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}System{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>System preflight</h1>
+  <p>Read-only checks against this machine. Nothing here changes your installation.</p>
+</div>
+
+{% if report.ok %}
+<div class="alert alert-info"><strong>Ready.</strong> CryoZeta can run on this machine.</div>
+{% else %}
+<div class="alert alert-error">
+  <strong>Not ready.</strong>
+  One or more required components are missing. Fix the FAIL items below, then reload.
+</div>
+{% endif %}
+
+<section class="panel">
+  <h2>Checks</h2>
+  <div class="panel-body">
+    <table>
+      <thead><tr><th style="width:90px">Result</th><th>Check</th><th>Detail</th></tr></thead>
+      <tbody>
+        {% for check in report.checks %}
+        <tr>
+          <td>
+            <span class="badge badge-{{ 'ok' if check.status == 'ok' else ('warn' if check.status == 'warn' else 'error') }}">
+              {{ check.symbol }}
+            </span>
+          </td>
+          <td>{{ check.name }}</td>
+          <td>
+            {{ check.detail }}
+            {% if check.remedy %}<div class="hint">&rarr; {{ check.remedy }}</div>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<div class="grid cols-2">
+  <section class="panel">
+    <h2>Execution environment</h2>
+    <div class="panel-body">
+      <dl class="kv">
+        <dt>CryoZeta repo</dt><dd class="mono">{{ report.repo or 'not found' }}</dd>
+        <dt>Pixi</dt><dd class="mono">{{ report.pixi_path or 'not found' }}</dd>
+        <dt>Pixi environment</dt><dd class="mono">{{ report.recommended_env }}</dd>
+        <dt>Data root</dt><dd class="mono">{{ settings.data_root }}</dd>
+        <dt>Bind address</dt><dd class="mono">{{ settings.host }}:{{ settings.port }}</dd>
+        <dt>Scheduler GPUs</dt><dd class="mono">{{ gpus|join(', ') }}</dd>
+      </dl>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>GPUs</h2>
+    <div class="panel-body">
+      {% if report.nvidia and report.nvidia.gpus %}
+      <table>
+        <thead><tr><th>#</th><th>Model</th><th>VRAM</th><th>CC</th></tr></thead>
+        <tbody>
+          {% for gpu in report.nvidia.gpus %}
+          <tr>
+            <td class="num">{{ gpu.index }}</td>
+            <td>{{ gpu.name }}</td>
+            <td class="num">{{ '%.1f'|format(gpu.memory_total_gib) }} GiB</td>
+            <td class="num">{{ gpu.compute_cap }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="hint" style="margin-top:10px">
+        Driver {{ report.nvidia.driver_version }}, supports CUDA up to
+        {{ report.nvidia.driver_cuda_version }}.
+      </div>
+      {% else %}
+      <div class="empty">
+        No NVIDIA GPU detected.<br>
+        <span class="hint">{{ report.nvidia.error if report.nvidia else '' }}</span>
+      </div>
+      {% endif %}
+    </div>
+  </section>
+</div>
+{% endblock %}

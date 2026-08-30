@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Results &middot; {{ job.display_title }}{% endblock %}
+
+{% macro filelist(files, empty_message) %}
+  {% if files %}
+  <ul class="filelist">
+    {% for file in files %}
+    <li>
+      <span class="fname">{{ file.relative }}</span>
+      <span class="fsize">{{ file.size_human }}</span>
+      <a class="btn btn-sm" href="/jobs/{{ job.id }}/files/{{ file.relative }}">Download</a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="empty">{{ empty_message }}</div>
+  {% endif %}
+{% endmacro %}
+
+{% block content %}
+<div class="page-head">
+  <h1>{{ job.display_title }}</h1>
+  <p><a href="/jobs/{{ job.id }}">&larr; Back to job</a> &middot; <span class="mono">{{ job.id }}</span></p>
+</div>
+
+<div class="toolbar" style="margin-bottom:20px">
+  <a class="btn btn-primary" href="/jobs/{{ job.id }}/download">Download complete job (ZIP)</a>
+  <span class="badge badge-{{ job.status.badge }}">{{ job.status.value }}</span>
+  <span class="hint">Finished {{ job.finished_at|fmt_time }} &middot; {{ job.duration_seconds|fmt_duration }}</span>
+</div>
+
+{% if not results.has_any %}
+<div class="alert alert-warn">
+  <strong>No output files found.</strong>
+  {% if job.status.value != 'completed' %}
+    This job did not complete successfully, so CryoZeta may not have written any results.
+  {% else %}
+    The job reported success but its output directory is empty &mdash; check the log.
+  {% endif %}
+</div>
+{% endif %}
+
+{% if results.primary_model %}
+<section class="panel">
+  <h2>Structure preview</h2>
+  <div class="panel-body">
+    <div id="viewer"></div>
+    <div class="hint" id="viewer-status" style="margin-top:9px">Loading preview&hellip;</div>
+    <div class="hint">
+      Showing <span class="mono">{{ results.primary_model.relative }}</span>.
+      The preview is a convenience only &mdash; use ChimeraX or PyMOL for analysis.
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<section class="panel">
+  <h2>Final ranked models (mmCIF)</h2>
+  <div class="panel-body">
+    {{ filelist(results.final_models, 'No final models were produced.') }}
+    {% if results.final_models %}
+    <div class="hint" style="margin-top:10px">
+      Ranked by CryoZeta's own selection (<code>recall_ccmask_ca</code>); sample 0 is best.
+    </div>
+    {% endif %}
+  </div>
+</section>
+
+<div class="grid cols-2">
+  <section class="panel">
+    <h2>Confidence</h2>
+    <div class="panel-body">{{ filelist(results.confidence, 'No confidence JSON files.') }}</div>
+  </section>
+
+  <section class="panel">
+    <h2>Scores</h2>
+    <div class="panel-body">{{ filelist(results.scores, 'No scores.csv found.') }}</div>
+  </section>
+</div>
+
+<div class="grid cols-2">
+  <section class="panel">
+    <h2>Timing</h2>
+    <div class="panel-body">{{ filelist(results.timing, 'No timing files.') }}</div>
+  </section>
+
+  <section class="panel">
+    <h2>Logs</h2>
+    <div class="panel-body">
+      <ul class="filelist">
+        <li>
+          <span class="fname">logs/job.log</span>
+          <a class="btn btn-sm" href="/jobs/{{ job.id }}/files/logs/job.log">Download</a>
+        </li>
+        <li>
+          <span class="fname">spec/input.json</span>
+          <a class="btn btn-sm" href="/jobs/{{ job.id }}/files/spec/input.json">Download</a>
+        </li>
+      </ul>
+    </div>
+  </section>
+</div>
+
+<section class="panel">
+  <h2>Intermediate models</h2>
+  <div class="panel-body">{{ filelist(results.intermediate_models, 'No intermediate models.') }}</div>
+</section>
+
+{% if results.other %}
+<section class="panel">
+  <h2>Other files</h2>
+  <div class="panel-body">{{ filelist(results.other, '') }}</div>
+</section>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if results.primary_model %}
+<script src="https://3Dmol.org/build/3Dmol-min.js" onerror="window.__viewerFailed=true"></script>
+<script>
+  initViewer({{ ('/jobs/' ~ job.id ~ '/files/' ~ results.primary_model.relative)|tojson }});
+</script>
+{% endif %}
+{% endblock %}

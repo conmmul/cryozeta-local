@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}{{ job.display_title }}{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>{{ job.display_title }}</h1>
+  <p class="mono">{{ job.id }}</p>
+</div>
+
+{% if job.status.value == 'failed' and job.error_summary %}
+<div class="alert alert-error">
+  <strong>Job failed (exit code {{ job.exit_code }})</strong>
+  {{ job.error_summary }}
+</div>
+{% elif job.status.value == 'interrupted' %}
+<div class="alert alert-warn">
+  <strong>Interrupted</strong>
+  {{ job.error_summary or 'The server stopped while this job was running.' }}
+  Its outputs are incomplete &mdash; use <em>Rerun</em> to start it again.
+</div>
+{% elif job.status.value == 'cancelled' %}
+<div class="alert alert-info"><strong>Cancelled</strong> {{ job.error_summary }}</div>
+{% endif %}
+
+<div class="grid cols-2">
+  <!-- ---------- run status ---------- -->
+  <section class="panel">
+    <h2>Run status</h2>
+    <div class="panel-body">
+      <div class="toolbar" style="margin-bottom:16px">
+        <span class="badge badge-{{ job.status.badge }}" id="status-badge">{{ job.status.value }}</span>
+        {% if job.gpu_index is not none %}<span class="hint">GPU {{ job.gpu_index }}</span>{% endif %}
+        <span class="spacer" style="flex:1"></span>
+        {% if job.status.is_active %}
+        <form method="post" action="/jobs/{{ job.id }}/cancel">
+          <button class="btn btn-sm btn-danger" type="submit">Cancel</button>
+        </form>
+        {% else %}
+        <form method="post" action="/jobs/{{ job.id }}/rerun">
+          <button class="btn btn-sm" type="submit">Rerun</button>
+        </form>
+        {% endif %}
+        {% if job.status.value == 'completed' %}
+        <a class="btn btn-sm btn-primary" href="/jobs/{{ job.id }}/results">View results</a>
+        {% endif %}
+      </div>
+
+      <ul class="stages">
+        {% for key, label in stages %}
+        <li data-stage="{{ key }}" class="{{ 'done' if job.stage == 'done' else ('active' if job.stage == key else 'pending') }}">
+          <span class="dot">{{ '✓' if job.stage == 'done' else loop.index }}</span>
+          <span class="stage-name">{{ label }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </section>
+
+  <!-- ---------- parameters ---------- -->
+  <section class="panel">
+    <h2>Submission</h2>
+    <div class="panel-body">
+      <dl class="kv">
+        <dt>Entry name</dt><dd class="mono">{{ job.entry_name }}</dd>
+        <dt>Map</dt><dd class="mono">{{ job.map_filename }}</dd>
+        <dt>Resolution</dt><dd>{{ job.resolution }} &Aring;</dd>
+        <dt>Contour level</dt><dd>{{ job.contour_level }}</dd>
+        <dt>Pipeline</dt><dd>{{ job.run_mode.label }}</dd>
+        {% if job.run_mode.value == 'standard' %}
+        <dt>Inference mode</dt><dd class="mono">{{ job.inference_mode.value }}</dd>
+        {% endif %}
+        <dt>Total length</dt><dd>{{ job.total_seq_len }} residues/nt</dd>
+        <dt>Submitted</dt><dd>{{ job.created_at|fmt_time }}</dd>
+        <dt>Started</dt><dd>{{ job.started_at|fmt_time }}</dd>
+        <dt>Finished</dt><dd>{{ job.finished_at|fmt_time }}</dd>
+        <dt>Duration</dt><dd>{{ job.duration_seconds|fmt_duration }}</dd>
+        {% if job.exit_code is not none %}
+        <dt>Exit code</dt><dd class="mono">{{ job.exit_code }}</dd>
+        {% endif %}
+      </dl>
+
+      {% if job.note %}<div class="hint" style="margin-top:14px">{{ job.note }}</div>{% endif %}
+
+      <div style="margin-top:16px">
+        <label>Chains</label>
+        <ul class="filelist">
+          {% for seq in job.sequences %}
+          <li>
+            <span class="fname">{{ seq.label }} &middot; {{ seq.length }} res &times; {{ seq.count }}</span>
+            <span class="fsize mono">{{ seq.hash }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- ---------- log ---------- -->
+<section class="panel">
+  <h2>Log</h2>
+  <div class="panel-body">
+    <div class="toolbar" style="margin-bottom:12px">
+      <a class="btn btn-sm" href="/jobs/{{ job.id }}/log" target="_blank">Open raw log</a>
+      <a class="btn btn-sm" href="/jobs/{{ job.id }}/download">Download job ZIP</a>
+    </div>
+    <div class="logbox" id="logbox">{{ log or '(no output yet)' }}</div>
+  </div>
+</section>
+
+{% if job.command %}
+<section class="panel">
+  <h2>Command</h2>
+  <div class="panel-body">
+    <div class="logbox">{{ job.command|join(' ') }}</div>
+    <div class="hint" style="margin-top:9px">
+      Executed with <code>shell=False</code> as an argument array; no value above was parsed by a shell.
+    </div>
+  </div>
+</section>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>initJobPolling({{ job.id|tojson }}, {{ job.status.is_terminal|tojson }});</script>
+{% endblock %}

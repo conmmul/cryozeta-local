@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% block title %}New job{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>New CryoZeta job</h1>
+  <p>Upload a cryo-EM map and the sequences of every chain in the complex. Everything runs on this machine's GPU.</p>
+</div>
+
+{% if errors %}
+<div class="alert alert-error">
+  <strong>This job was not submitted.</strong>
+  <ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+{% if not repo %}
+<div class="alert alert-error">
+  <strong>No CryoZeta installation found on this machine.</strong>
+  Jobs cannot run until one is available. Set <code>CRYOZETA_WEB_REPO</code> to its
+  path, then check the <a href="/preflight">System</a> page.
+</div>
+{% elif not nvidia.gpus %}
+<div class="alert alert-warn">
+  <strong>No NVIDIA GPU detected on this machine.</strong>
+  You can still submit jobs, but they will fail at run time. See the
+  <a href="/preflight">System</a> page.
+</div>
+{% endif %}
+
+<form method="post" action="/jobs" enctype="multipart/form-data" id="job-form">
+
+  <!-- ============ 1. Map ============ -->
+  <section class="panel">
+    <h2>1 &middot; Cryo-EM map</h2>
+    <div class="panel-body">
+      <div class="grid cols-3">
+        <div>
+          <label for="map_file">Density map</label>
+          <input type="file" id="map_file" name="map_file"
+                 accept=".mrc,.map,.gz" required>
+          <div class="hint">Accepted: <code>.mrc</code>, <code>.map</code>, <code>.mrc.gz</code>, <code>.map.gz</code></div>
+        </div>
+        <div>
+          <label for="resolution">Resolution (&Aring;)</label>
+          <input type="number" id="resolution" name="resolution"
+                 step="0.01" min="{{ settings.min_resolution }}"
+                 max="{{ settings.max_resolution }}" placeholder="2.99" required>
+          <div class="hint">Between {{ settings.min_resolution }} and {{ settings.max_resolution }} &Aring;</div>
+        </div>
+        <div>
+          <label for="contour_level">Contour level</label>
+          <input type="number" id="contour_level" name="contour_level"
+                 step="any" placeholder="0.3" required>
+          <div class="hint">Must be non-zero. The recommended author contour level.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 2. Sequences ============ -->
+  <section class="panel">
+    <h2>2 &middot; Sequences</h2>
+    <div class="panel-body">
+      <div class="alert alert-info">
+        <strong>CryoZeta does not generate MSAs.</strong>
+        The upstream repository ships no MSA pipeline, so <em>protein</em> and <em>RNA</em>
+        chains need alignments you have already computed &mdash; upload a ZIP or point to a
+        directory on this machine. DNA needs no MSA.
+        <br><br>
+        Required filenames:
+        <br>&bull; Protein: <code>{{ MSA_PROTEIN_NON_PAIRING }}</code>, plus
+        <code>{{ MSA_PROTEIN_PAIRING }}</code> when the complex has two or more
+        <em>distinct</em> protein sequences.
+        <br>&bull; RNA: <code>{{ MSA_RNA }}</code>
+        <br><br>
+        Identical sequences are merged automatically and share one MSA directory.
+      </div>
+
+      <div id="sequence-rows"></div>
+      <button type="button" class="btn" id="add-sequence">+ Add sequence</button>
+
+      <div id="length-summary" class="hint" style="margin-top:14px"></div>
+    </div>
+  </section>
+
+  <!-- ============ 3. Run settings ============ -->
+  <section class="panel">
+    <h2>3 &middot; Run settings</h2>
+    <div class="panel-body">
+      <div class="grid cols-3">
+        <div>
+          <label for="run_mode">Pipeline</label>
+          <select id="run_mode" name="run_mode">
+            <option value="standard">Standard</option>
+            <option value="large">Large / cycle</option>
+          </select>
+          <div class="hint" id="mode-hint">
+            CryoZeta recommends large/cycle mode above {{ threshold }} residues.
+          </div>
+        </div>
+        <div>
+          <label for="inference_mode">Standard inference mode</label>
+          <select id="inference_mode" name="inference_mode">
+            {% for mode in inference_modes %}
+            <option value="{{ mode.value }}">{{ mode.value }}</option>
+            {% endfor %}
+          </select>
+          <div class="hint"><code>combined</code> runs both models and ranks the best.</div>
+        </div>
+        <div>
+          <label for="gpu_index">GPU</label>
+          <select id="gpu_index" name="gpu_index">
+            <option value="">First available</option>
+            {% for gpu in nvidia.gpus %}
+            <option value="{{ gpu.index }}">
+              {{ gpu.index }} &mdash; {{ gpu.name }} ({{ '%.0f'|format(gpu.memory_total_gib) }} GiB)
+            </option>
+            {% endfor %}
+          </select>
+          <div class="hint">One job per GPU at a time.</div>
+        </div>
+      </div>
+
+      <div class="grid cols-2" style="margin-top:16px">
+        <div>
+          <label for="title">Job title <span class="hint" style="display:inline">(optional)</span></label>
+          <input type="text" id="title" name="title" maxlength="200"
+                 placeholder="e.g. ribosome 50S subunit">
+          <div class="hint">Used for display and as the CryoZeta entry name (sanitised).</div>
+        </div>
+        <div>
+          <label for="note">Note <span class="hint" style="display:inline">(optional)</span></label>
+          <input type="text" id="note" name="note" maxlength="2000">
+        </div>
+      </div>
+
+      <div style="margin-top:16px" id="overwrite-wrap">
+        <label style="display:flex; align-items:center; gap:9px; font-weight:400">
+          <input type="checkbox" name="overwrite" value="1" style="width:auto">
+          Overwrite existing outputs (re-run stages that already produced results)
+        </label>
+        <div class="hint">
+          Standard mode only &mdash; large/cycle mode always re-runs detection.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="toolbar">
+    <button type="submit" class="btn btn-primary">Submit job</button>
+    <a href="/jobs" class="btn">Cancel</a>
+  </div>
+</form>
+
+<template id="sequence-template">
+  <div class="seq-row">
+    <div class="seq-row-head">
+      <span class="idx">Chain <span class="row-number"></span></span>
+      <span class="spacer"></span>
+      <button type="button" class="btn btn-sm btn-danger remove-row">Remove</button>
+    </div>
+    <div class="grid cols-4">
+      <div>
+        <label>Type</label>
+        <select name="seq_type" class="seq-type">
+          {% for seq_type in seq_types %}
+          <option value="{{ seq_type.value }}">{{ seq_type.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div style="grid-column: span 2">
+        <label>One-letter sequence</label>
+        <textarea name="seq_value" rows="3" class="seq-value"
+                  placeholder="MKTAYIAKQRQISFVKSHFSRQ..."></textarea>
+        <div class="hint seq-length">0 residues</div>
+      </div>
+      <div>
+        <label>Copies</label>
+        <input type="number" name="seq_count" value="1" min="1"
+               max="{{ settings.max_copies_per_sequence }}" class="seq-count">
+      </div>
+    </div>
+
+    <div class="msa-block">
+      <div class="grid cols-2">
+        <div>
+          <label>MSA archive (.zip)</label>
+          <input type="file" name="msa_archive" accept=".zip">
+          <div class="hint msa-required"></div>
+        </div>
+        <div>
+          <label>&hellip; or a directory on this machine</label>
+          <input type="text" name="msa_directory" placeholder="/data/msas/chain_A">
+          <div class="hint">Absolute path readable by the server.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.CRYOZETA_CONFIG = {
+    threshold: {{ threshold }},
+    msaProtein: {{ MSA_PROTEIN_NON_PAIRING|tojson }},
+    msaProteinPairing: {{ MSA_PROTEIN_PAIRING|tojson }},
+    msaRna: {{ MSA_RNA|tojson }}
+  };
+  initNewJobForm();
+</script>
+{% endblock %}

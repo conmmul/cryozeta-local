@@ -1,0 +1,19 @@
+# Web-application dependencies only.
+#
+# These are deliberately NOT installed into CryoZeta's pixi environment: the
+# server runs in its own virtualenv and invokes CryoZeta's demo scripts as
+# subprocesses, which do their own `pixi run`. Keeping the two apart means an
+# upgrade here can never disturb a working CryoZeta install.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+jinja2>=3.1
+python-multipart>=0.0.9
+
+# Used to verify that an uploaded file really is an MRC/CCP4 map before a job
+# is queued. Optional -- the code falls back to a header-stamp check.
+mrcfile>=1.5.4
+
+# Test-only
+pytest>=8.0
+httpx>=0.27
+numpy>=1.24

@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Jobs{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Jobs</h1>
+  <p>{{ jobs|length }} job{{ '' if jobs|length == 1 else 's' }}. Queued and completed jobs survive server restarts.</p>
+</div>
+
+<section class="panel">
+  <h2>All jobs</h2>
+  {% if jobs %}
+  <table>
+    <thead>
+      <tr>
+        <th>Job</th>
+        <th>Status</th>
+        <th>Stage</th>
+        <th>GPU</th>
+        <th>Submitted</th>
+        <th>Finished</th>
+        <th>Duration</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for job in jobs %}
+      <tr>
+        <td>
+          <a href="/jobs/{{ job.id }}">{{ job.display_title }}</a>
+          <div class="hint">
+            {{ job.run_mode.label }}
+            {%- if job.run_mode.value == 'standard' %} &middot; {{ job.inference_mode.value }}{% endif %}
+            &middot; {{ job.total_seq_len }} res
+          </div>
+        </td>
+        <td>
+          <span class="badge badge-{{ job.status.badge }}">{{ job.status.value }}</span>
+          {% if job.error_summary and job.status.value in ('failed', 'interrupted') %}
+          <div class="hint">{{ job.error_summary[:110] }}</div>
+          {% endif %}
+        </td>
+        <td class="hint">{{ job.stage or '--' }}</td>
+        <td class="num">{{ job.gpu_index if job.gpu_index is not none else '--' }}</td>
+        <td class="num hint">{{ job.created_at|fmt_time }}</td>
+        <td class="num hint">{{ job.finished_at|fmt_time }}</td>
+        <td class="num hint">{{ job.duration_seconds|fmt_duration }}</td>
+        <td>
+          <div class="toolbar">
+            {% if job.status.is_active %}
+            <form method="post" action="/jobs/{{ job.id }}/cancel">
+              <button class="btn btn-sm btn-danger" type="submit">Cancel</button>
+            </form>
+            {% else %}
+            <form method="post" action="/jobs/{{ job.id }}/rerun">
+              <button class="btn btn-sm" type="submit">Rerun</button>
+            </form>
+            {% endif %}
+            {% if job.status.value == 'completed' %}
+            <a class="btn btn-sm" href="/jobs/{{ job.id }}/results">Results</a>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">
+    No jobs yet. <a href="/new">Submit one</a>.
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

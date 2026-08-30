@@ -1,0 +1,61 @@
+# Example systemd *user* service for the CryoZeta local server.
+#
+# This file is an example only. Nothing installs or enables it automatically.
+# To use it:
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp cryozeta-local-server.service.example \
+#      ~/.config/systemd/user/cryozeta-local-server.service
+#   # edit the paths below to match your machine, then:
+#   systemctl --user daemon-reload
+#   systemctl --user start  cryozeta-local-server
+#   systemctl --user status cryozeta-local-server
+#   journalctl --user -u cryozeta-local-server -f
+#
+# To start it at boot without an active login session:
+#   sudo loginctl enable-linger $USER
+#   systemctl --user enable cryozeta-local-server
+#
+# A *user* service is deliberate: CryoZeta jobs then run as you, with your
+# permissions and your pixi installation. Do not run this as a system service
+# unless you have a specific reason -- the app has no authentication.
+
+[Unit]
+Description=CryoZeta local web server
+Documentation=file:%h/cryozeta-local/local_server/README.md
+After=network.target
+
+[Service]
+Type=simple
+
+# --- EDIT THESE ------------------------------------------------------------
+WorkingDirectory=%h/cryozeta-local/local_server
+Environment=CRYOZETA_WEB_REPO=%h/cryozeta-local/external/CryoZeta
+Environment=CRYOZETA_WEB_DATA_ROOT=%h/cryozeta-web-data
+# ---------------------------------------------------------------------------
+
+Environment=CRYOZETA_WEB_HOST=127.0.0.1
+Environment=CRYOZETA_WEB_PORT=8000
+# pixi is usually installed here and is not on a service's default PATH.
+Environment=PATH=%h/.pixi/bin:/usr/local/bin:/usr/bin:/bin
+
+ExecStart=%h/cryozeta-local/local_server/.venv/bin/python -m uvicorn \
+          app.main:create_app --factory --host 127.0.0.1 --port 8000
+
+# Restart the web server on crashes, but note that in-flight CryoZeta jobs are
+# NOT resumed: on startup the app marks them "interrupted" so their partial
+# outputs are never mistaken for completed results.
+Restart=on-failure
+RestartSec=5
+
+# Give running jobs time to be signalled before the unit is killed.
+KillMode=mixed
+TimeoutStopSec=60
+
+# Modest hardening. Deliberately not aggressive: CryoZeta needs the GPU
+# devices, a writable pixi cache and a writable extension-compile cache.
+NoNewPrivileges=yes
+PrivateTmp=no
+
+[Install]
+WantedBy=default.target

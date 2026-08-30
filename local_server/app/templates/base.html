@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}CryoZeta{% endblock %} &middot; CryoZeta local</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="mark">CryoZeta</span>
+    <span class="sub">local server</span>
+  </div>
+  <nav>
+    <a href="/new" class="{{ 'active' if request.url.path == '/new' else '' }}">New job</a>
+    <a href="/jobs" class="{{ 'active' if request.url.path.startswith('/jobs') else '' }}">
+      Jobs
+      {% set active = (counts.get('running', 0) + counts.get('queued', 0)) %}
+      {% if active %}<span class="pill">{{ active }}</span>{% endif %}
+    </a>
+    <a href="/preflight" class="{{ 'active' if request.url.path == '/preflight' else '' }}">System</a>
+  </nav>
+  <div class="hostinfo">
+    {% if nvidia and nvidia.gpus %}
+      <span title="Detected on this machine">{{ nvidia.gpus|length }} GPU{{ '' if nvidia.gpus|length == 1 else 's' }}</span>
+    {% else %}
+      <span class="warn-text" title="No CUDA GPU detected on this host">no GPU detected</span>
+    {% endif %}
+  </div>
+</header>
+
+<main>
+  {% block content %}{% endblock %}
+</main>
+
+<footer class="footer">
+  <span>Runs entirely on this machine. Nothing is sent to the Kihara Lab server or any external service.</span>
+  <span>Code GPL-3.0 &middot; model weights are academic / non-commercial only</span>
+</footer>
+<script src="/static/app.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>
